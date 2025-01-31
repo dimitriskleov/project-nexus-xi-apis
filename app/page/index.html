@@ -1,0 +1,441 @@
+<html><head><base href="" />
+<style>
+:root {
+  --windows-bg: #c0c0c0;
+  --windows-border: #808080;
+  --windows-text: #000000;
+}
+
+body {
+  font-family: 'MS Sans Serif', sans-serif;
+  background-color: var(--windows-bg);
+  margin: 20px;
+}
+
+.toolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.button {
+  padding: 4px 12px;
+  background: var(--windows-bg);
+  border: 2px solid var(--windows-border);
+  box-shadow: 2px 2px 0px #404040, -2px -2px 0px #ffffff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.button:active {
+  box-shadow: -2px -2px 0px #404040, 2px 2px 0px #ffffff;
+}
+
+.main-content {
+  display: flex;
+  border: 2px solid var(--windows-border);
+  box-shadow: 2px 2px 0px #ffffff, -2px -2px 0px #404040;
+  width: 100%;
+  height: calc(100vh - 80px); 
+}
+
+.tree-view {
+  width: 300px; 
+  border-right: 2px solid var(--windows-border);
+  overflow-y: auto;
+  padding: 4px;
+  background: white;
+}
+
+.file-view {
+  flex: 1;
+  padding: 4px;
+  overflow-y: auto;
+  background: white;
+}
+
+.folder, .file {
+  padding: 2px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.folder:hover, .file:hover {
+  background-color: #000080;
+  color: white;
+}
+
+.context-menu {
+  position: fixed;
+  background: var(--windows-bg);
+  border: 2px solid var(--windows-border);
+  box-shadow: 2px 2px 0px #404040;
+  padding: 2px;
+  z-index: 1000;
+}
+
+.context-menu-item {
+  padding: 4px 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.context-menu-item:hover {
+  background-color: #000080;
+  color: white;
+}
+
+.context-menu-separator {
+  height: 1px;
+  background: var(--windows-border);
+  margin: 4px 0;
+}
+
+.folder-icon, .file-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.button-icon {
+  width: 14px;
+  height: 14px;
+}
+
+pre {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.current-path {
+  background: white;
+  padding: 4px;
+  margin-bottom: 8px;
+  border: 2px solid var(--windows-border);
+  box-shadow: inset 2px 2px 0px #404040, inset -2px -2px 0px #ffffff;
+}
+
+.search-box {
+  padding: 4px;
+  margin-bottom: 8px;
+  width: 200px;
+  border: 2px solid var(--windows-border);
+  box-shadow: inset 2px 2px 0px #404040, inset -2px -2px 0px #ffffff;
+}
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <button class="button" onclick="handleBack()">
+    <svg class="button-icon" viewBox="0 0 16 16">
+      <path fill="currentColor" d="M7.5 1.5L3 6l4.5 4.5V7.5h5v-3h-5V1.5z"/>
+    </svg>
+    Back
+  </button>
+  <button class="button" onclick="displayContents(currentPath)">
+    <svg class="button-icon" viewBox="0 0 16 16">
+      <path fill="currentColor" d="M8 1.5a6.5 6.5 0 100 13 6.5 6.5 0 000-13zm0 12a5.5 5.5 0 110-11 5.5 5.5 0 010 11zm2.5-6l-3.5 3.5L4.5 8.5l1-1L7 8.67l2.5-2.5 1 .83z"/>
+    </svg>
+    Refresh
+  </button>
+  <input type="text" class="search-box" placeholder="Search files..." oninput="handleSearch(this.value)">
+</div>
+
+<div class="current-path" id="currentPath"></div>
+
+<div class="main-content">
+  <div class="tree-view" id="treeView"></div>
+  <div class="file-view" id="fileView"></div>
+</div>
+
+<div class="context-menu" id="contextMenu" style="display: none;"></div>
+
+<script>
+const GITHUB_API = 'https://api.github.com';
+const REPO_OWNER = 'dimitriskleov';
+const REPO_NAME = 'project-nexus-xi-apis';
+
+const folderIcon = `<svg class="folder-icon" viewBox="0 0 16 16"><path fill="#DAA520" d="M1.75 1A1.75 1.75 0 000 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0016 13.25v-8.5A1.75 1.75 0 0014.25 3H7.5L5.5 1H1.75z"/></svg>`;
+const fileIcon = `<svg class="file-icon" viewBox="0 0 16 16"><path fill="#87CEEB" d="M3.75 1.5a.25.25 0 00-.25.25v12.5c0 .138.112.25.25.25h9.5a.25.25 0 00.25-.25V4.664a.25.25 0 00-.073-.177l-2.914-2.914a.25.25 0 00-.177-.073H3.75zM2 1.75C2 .784 2.784 0 3.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0113.25 16h-9.5A1.75 1.75 0 012 14.25V1.75z"/></svg>`;
+
+let currentPath = '';
+let pathHistory = [''];
+let cachedContents = new Map();
+
+document.addEventListener('click', () => {
+  document.getElementById('contextMenu').style.display = 'none';
+});
+
+function showContextMenu(e, item) {
+  e.preventDefault();
+  const contextMenu = document.getElementById('contextMenu');
+  contextMenu.style.display = 'block';
+  contextMenu.style.left = `${e.pageX}px`;
+  contextMenu.style.top = `${e.pageY}px`;
+  
+  const menuItems = [
+    { label: 'Download', action: () => downloadItem(item) },
+    { label: 'Copy Path', action: () => copyToClipboard(item.path) },
+    { label: 'Open in New Tab', action: () => window.open(item.html_url, '_blank') },
+    { type: 'separator' },
+    { label: 'Properties', action: () => showProperties(item) },
+    { label: 'Add to Favorites', action: () => addToFavorites(item) },
+    { label: 'Share Link', action: () => shareLink(item) },
+    { label: 'View History', action: () => viewHistory(item) },
+    { label: 'View Raw', action: () => viewRaw(item) },
+    { label: 'Copy Contents', action: () => copyContents(item) },
+    { label: 'Calculate Size', action: () => calculateSize(item) }
+  ];
+
+  contextMenu.innerHTML = menuItems.map(item => 
+    item.type === 'separator' 
+      ? '<div class="context-menu-separator"></div>'
+      : `<div class="context-menu-item" onclick="event.stopPropagation(); ${item.action.toString()}()">${item.label}</div>`
+  ).join('');
+}
+
+async function downloadItem(item) {
+  try {
+    if (item.type === 'dir') {
+      alert('Directory download not supported yet');
+      return;
+    }
+    
+    const response = await fetch(item.download_url);
+    if (!response.ok) throw new Error('Download failed');
+    
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.style.display = 'none';
+    a.href = url;
+    a.download = item.name;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    }, 100);
+  } catch (error) {
+    console.error('Download error:', error);
+    alert('Failed to download file. Please try again.');
+  }
+}
+
+async function copyToClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    alert('Successfully copied to clipboard!');
+  } catch (err) {
+    console.error('Failed to copy:', err);
+    alert('Failed to copy to clipboard. Please try manually.');
+  }
+}
+
+function showProperties(item) {
+  const date = new Date(item.last_modified || Date.now()).toLocaleString();
+  const details = `
+    Name: ${item.name}
+    Type: ${item.type}
+    Size: ${item.size ? (item.size / 1024).toFixed(2) + ' KB' : 'N/A'}
+    Path: ${item.path}
+    Last Modified: ${date}
+    SHA: ${item.sha}
+  `;
+  alert(details);
+}
+
+function addToFavorites(item) {
+  try {
+    const favorites = JSON.parse(localStorage.getItem('favorites') || '[]');
+    if (favorites.includes(item.path)) {
+      alert('Already in favorites!');
+      return;
+    }
+    favorites.push(item.path);
+    localStorage.setItem('favorites', JSON.stringify(favorites));
+    alert('Successfully added to favorites!');
+  } catch (err) {
+    console.error('Favorites error:', err);
+    alert('Failed to add to favorites');
+  }
+}
+
+function shareLink(item) {
+  const url = item.html_url;
+  if (navigator.share) {
+    navigator.share({
+      title: item.name,
+      url: url
+    }).catch(console.error);
+  } else {
+    copyToClipboard(url);
+  }
+}
+
+function viewHistory(item) {
+  const historyUrl = `https://github.com/${REPO_OWNER}/${REPO_NAME}/commits/main/${item.path}`;
+  window.open(historyUrl, '_blank');
+}
+
+function viewRaw(item) {
+  if (item.type === 'file') {
+    window.open(item.download_url, '_blank');
+  } else {
+    alert('Raw view is only available for files');
+  }
+}
+
+async function copyContents(item) {
+  try {
+    if (item.type !== 'file') {
+      alert('Can only copy contents of files');
+      return;
+    }
+    
+    const response = await fetch(item.download_url);
+    if (!response.ok) throw new Error('Failed to fetch content');
+    
+    const content = await response.text();
+    await navigator.clipboard.writeText(content);
+    alert('File contents copied to clipboard!');
+  } catch (err) {
+    console.error('Copy error:', err);
+    alert('Failed to copy file contents');
+  }
+}
+
+async function calculateSize(item) {
+  if (item.type === 'file') {
+    const size = item.size;
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let unitIndex = 0;
+    let displaySize = size;
+    
+    while (displaySize >= 1024 && unitIndex < units.length - 1) {
+      displaySize /= 1024;
+      unitIndex++;
+    }
+    
+    alert(`File size: ${displaySize.toFixed(2)} ${units[unitIndex]}`);
+  } else {
+    alert('Directory size calculation not supported yet');
+  }
+}
+
+let searchTimeout;
+function handleSearch(value) {
+  clearTimeout(searchTimeout);
+  searchTimeout = setTimeout(async () => {
+    const contents = await fetchRepoContents(currentPath);
+    const filtered = contents.filter(item => 
+      item.name.toLowerCase().includes(value.toLowerCase())
+    );
+    renderContents(filtered);
+  }, 300);
+}
+
+async function fetchRepoContents(path = '') {
+  if (cachedContents.has(path)) {
+    return cachedContents.get(path);
+  }
+  
+  try {
+    const response = await fetch(`${GITHUB_API}/repos/${REPO_OWNER}/${REPO_NAME}/contents/${path}`);
+    const data = await response.json();
+    cachedContents.set(path, data);
+    return data;
+  } catch (error) {
+    console.error('Error fetching repo contents:', error);
+    return [];
+  }
+}
+
+function handleBack() {
+  if (pathHistory.length > 1) {
+    pathHistory.pop(); 
+    currentPath = pathHistory[pathHistory.length - 1];
+    displayContents(currentPath);
+  }
+}
+
+function renderContents(contents) {
+  const treeView = document.getElementById('treeView');
+  
+  const sorted = contents.sort((a, b) => {
+    if (a.type === b.type) return a.name.localeCompare(b.name);
+    return a.type === 'dir' ? -1 : 1;
+  });
+  
+  treeView.innerHTML = '';
+  
+  sorted.forEach(item => {
+    const element = document.createElement('div');
+    element.className = item.type === 'dir' ? 'folder' : 'file';
+    element.innerHTML = `
+      ${item.type === 'dir' ? folderIcon : fileIcon}
+      <span>${item.name}</span>
+    `;
+    
+    element.addEventListener('click', () => {
+      if (item.type === 'dir') {
+        displayContents(item.path);
+      } else {
+        displayFileContent(item);
+      }
+    });
+    
+    element.addEventListener('contextmenu', (e) => showContextMenu(e, item));
+    
+    treeView.appendChild(element);
+  });
+}
+
+async function displayContents(path = '') {
+  currentPath = path;
+  if (!pathHistory.includes(path)) {
+    pathHistory.push(path);
+  }
+  
+  document.getElementById('currentPath').textContent = path || '/';
+  
+  const contents = await fetchRepoContents(path);
+  renderContents(contents);
+}
+
+async function displayFileContent(file) {
+  const fileView = document.getElementById('fileView');
+  if (file.size > 1000000) {
+    fileView.innerHTML = '<p>File too large to display</p>';
+    return;
+  }
+  
+  try {
+    const response = await fetch(file.download_url);
+    const content = await response.text();
+    fileView.innerHTML = `<pre>${escapeHtml(content)}</pre>`;
+  } catch (error) {
+    fileView.innerHTML = '<p>Error loading file content</p>';
+  }
+}
+
+function escapeHtml(unsafe) {
+  return unsafe
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+displayContents();
+</script>
+
+</body>
+</html>
